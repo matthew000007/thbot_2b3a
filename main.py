@@ -6,7 +6,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
 
 # Конфигурация бота
-API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
+API_TOKEN = '8158783896:AAHJgdIfvl1GT9JnM7Wbwa2wOQKQUc2ad1o'
 
 # Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
