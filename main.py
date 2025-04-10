@@ -1,33 +1,19 @@
 import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+import logging
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import BotCommand, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-# Конфигурация бота
-API_TOKEN = '8158783896:AAHJgdIfvl1GT9JnM7Wbwa2wOQKQUc2ad1o'
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# Инициализация бота
+API_TOKEN = os.getenv('TELEGRAM_API_TOKEN')
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
-
-# Регистрация команд меню
-async def set_commands(bot: Bot):
-    commands = [
-        BotCommand(command="/start", description="Перезапустить"),
-        BotCommand(command="/help", description="Помощь"),
-        BotCommand(command="/calculate", description="Расчет дозы"),
-        BotCommand(command="/protocol", description="Инструкции")
-    ]
-    await bot.set_my_commands(commands)
-
-# Состояния FSM
-class Form(StatesGroup):
-    drug_choice = State()
-    weight = State()
-    renal_function = State()
 
 # Клавиатура выбора препарата
 drugs_keyboard = ReplyKeyboardMarkup(
@@ -37,7 +23,22 @@ drugs_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Обработчик команд /start и /help
+# Состояния FSM
+class Form(StatesGroup):
+    drug_choice = State()
+    weight = State()
+    renal_function = State()
+
+# Установка команд меню (для aiogram 2.x)
+async def set_bot_commands():
+    commands = [
+        types.BotCommand(command="/start", description="Главное меню"),
+        types.BotCommand(command="/calculate", description="Расчет дозы"),
+        types.BotCommand(command="/protocol", description="Инструкции")
+    ]
+    await bot.set_my_commands(commands)
+
+# Обработчик /start и /help
 @dp.message_handler(commands=['start', 'help'])
 async def send_welcome(message: types.Message):
     await message.reply(
@@ -45,10 +46,11 @@ async def send_welcome(message: types.Message):
         "Доступные команды:\n"
         "/calculate - начать расчет\n"
         "/protocol - официальные рекомендации\n\n"
-        "⚠️ Для медицинских работников! Требуется проверка врача!"
+        "⚠️ Для медицинских работников! Требуется проверка врача!",
+        reply_markup=types.ReplyKeyboardRemove()
     )
 
-# Обработчик команды /protocol
+# Обработчик /protocol
 @dp.message_handler(commands=['protocol'])
 async def show_protocol(message: types.Message):
     protocol_text = (
@@ -65,8 +67,8 @@ async def show_protocol(message: types.Message):
     )
     await message.reply(protocol_text)
 
-# Обработчик команды /calculate
-@dp.message_handler(commands=['calculate'], state='*')
+# Обработчик /calculate
+@dp.message_handler(commands=['calculate'])
 async def calculate_start(message: types.Message):
     await Form.drug_choice.set()
     await message.reply("Выберите препарат:", reply_markup=drugs_keyboard)
@@ -75,7 +77,7 @@ async def calculate_start(message: types.Message):
 @dp.message_handler(state=Form.drug_choice)
 async def process_drug_choice(message: types.Message, state: FSMContext):
     if message.text not in ["Эптифибатид", "Агграстат"]:
-        await message.reply("❌ Неверный выбор! Используйте кнопки ниже")
+        await message.reply("❌ Пожалуйста, выберите препарат используя кнопки ниже")
         return
     
     async with state.proxy() as data:
@@ -84,7 +86,7 @@ async def process_drug_choice(message: types.Message, state: FSMContext):
     await Form.weight.set()
     await message.reply("Введите вес пациента (кг):", reply_markup=types.ReplyKeyboardRemove())
 
-# Обработчик ввода веса
+# Обработчик веса
 @dp.message_handler(state=Form.weight)
 async def process_weight(message: types.Message, state: FSMContext):
     try:
@@ -102,7 +104,7 @@ async def process_weight(message: types.Message, state: FSMContext):
         await message.reply("❌ Ошибка! Введите положительное число (например: 75)")
         return
 
-# Обработчик ввода клиренса
+# Обработчик клиренса
 @dp.message_handler(state=Form.renal_function)
 async def process_renal(message: types.Message, state: FSMContext):
     try:
@@ -114,24 +116,27 @@ async def process_renal(message: types.Message, state: FSMContext):
             drug = data['drug']
             weight = data['weight']
             
-        # Расчет для Эптифибатида
         if drug == "Эптифибатид":
+            # Расчет для Эптифибатида
             bolus = min(weight * 180 / 1000, 22.6)
             infusion_rate = 1 if cl < 50 else 2
             infusion = min(weight * infusion_rate * 60 / 1000, 15)
+            note = " (коррекция при почечной недостаточности)" if cl < 50 else ""
             
-        # Расчет для Агграстата
         elif drug == "Агграстат":
+            # Расчет для Агграстата
             bolus = weight * 25 / 1000
             infusion_rate = 0.075 if cl < 30 else 0.15
             infusion = weight * infusion_rate * 60
-            
+            note = " (коррекция при почечной недостаточности)" if cl < 30 else ""
+        
         response = (
-            f"📋 Результаты для {drug} ({weight} кг, Cl {cl} мл/мин):\n\n"
+            f"📋 Результаты для {drug}:\n"
+            f"▪️ Вес: {weight} кг\n"
+            f"▪️ Клиренс креатинина: {cl} мл/мин\n\n"
             f"💉 Болюсная доза: {bolus:.2f} мг\n"
-            f"🔄 Инфузия: {infusion:.2f} мг/час\n\n"
-            f"{'🚩 Коррекция дозы при почечной недостаточности' if (cl <50 and drug=='Эптифибатид') or (cl <30 and drug=='Агграстат') else ''}\n"
-            "⚠️ Обязателен контроль врача!"
+            f"🔄 Инфузия: {infusion:.2f} мг/час{note}\n\n"
+            "⚠️ Обязателен контроль врача перед применением!"
         )
         
         await message.reply(response)
@@ -142,5 +147,6 @@ async def process_renal(message: types.Message, state: FSMContext):
         return
 
 if __name__ == '__main__':
+    # Установка команд меню при старте
     from aiogram import executor
-    executor.start_polling(dp, skip_updates=True, on_startup=set_commands)
+    executor.start_polling(dp, skip_updates=True, on_startup=set_bot_commands)
